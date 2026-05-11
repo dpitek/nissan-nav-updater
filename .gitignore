@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+/tmp/
+*.img
+*.bin
+*.bak
+*.DAT.bak
+*_backup*.DAT
+.env
