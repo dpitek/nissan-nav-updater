@@ -51,6 +51,7 @@ from lib.card import find_card
 MATCH_THRESHOLD_DEFAULT = 50   # meters
 OVERPASS_MAX_CONCURRENT = 2    # Overpass API allows 2 simultaneous connections
 DEFAULT_WORKERS = 4            # total threads; only 2 hit Overpass at once
+MAX_RECORDS_PER_TILE = 50_000  # hard cap — prevents hour-long loops on dense city tiles
 
 _overpass_sem: threading.Semaphore | None = None
 _print_lock = threading.Lock()
@@ -133,12 +134,21 @@ def process_tile(tile_path: str, threshold_m: int, dry_run: bool,
     sub_tile  = nearest_sub_tile(data)
 
     compressed_records: list[bytes] = []
+    capped = False
 
-    for road in roads:
+    for r_idx, road in enumerate(roads):
+        if len(compressed_records) >= MAX_RECORDS_PER_TILE:
+            capped = True
+            break
+
         nodes = road['nodes']
         if len(nodes) < 2:
             continue
         for i in range(len(nodes) - 1):
+            if len(compressed_records) >= MAX_RECORDS_PER_TILE:
+                capped = True
+                break
+
             lat_f, lon_f = nodes[i]['lat'],     nodes[i]['lon']
             lat_t, lon_t = nodes[i + 1]['lat'], nodes[i + 1]['lon']
 
@@ -180,6 +190,11 @@ def process_tile(tile_path: str, threshold_m: int, dry_run: bool,
                 _log(f"  +link {next_link-1}: {name} [{seg_m:.0f}m] "
                      f"({lat_f:.5f},{lon_f:.5f})→({lat_t:.5f},{lon_t:.5f})")
 
+        # Progress heartbeat every 5000 OSM ways processed (visible in log)
+        if r_idx > 0 and r_idx % 5000 == 0:
+            _log(f"  [{fname}] analyzing… {r_idx}/{len(roads)} ways, "
+                 f"{len(compressed_records)} records so far")
+
     if not compressed_records:
         _log(f"[{idx}/{total}] {fname}  (0 new roads from {len(roads)} OSM ways, "
              f"fetch={fetch_ms}ms)")
@@ -189,8 +204,9 @@ def process_tile(tile_path: str, threshold_m: int, dry_run: bool,
     written, space_skipped = batch_write_records(tile_path, compressed_records, dry_run)
 
     tag = "[DRY RUN] " if dry_run else ""
+    cap_tag = " [CAP HIT]" if capped else ""
     _log(f"[{idx}/{total}] {fname}  {tag}+{written} roads  "
-         f"({space_skipped} skipped/full)  fetch={fetch_ms}ms")
+         f"({space_skipped} skipped/full){cap_tag}  fetch={fetch_ms}ms")
 
     return fname, written, space_skipped, None
 

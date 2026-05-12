@@ -48,13 +48,15 @@ def fetch_roads(bbox: tuple[float, float, float, float],
     if road_types is None:
         road_types = [
             "motorway", "trunk", "primary", "secondary", "tertiary",
-            "residential", "service", "unclassified", "road",
+            "residential", "unclassified",
+            # "service" excluded — driveways/parking lots explode query size in cities
         ]
 
     south, west, north, east = bbox
     hw_filter = "|".join(road_types)
+    # maxsize:200MB prevents runaway downloads on dense urban tiles
     ql = f"""
-[out:json][timeout:{OVERPASS_TIMEOUT}];
+[out:json][timeout:{OVERPASS_TIMEOUT}][maxsize:209715200];
 (
   way["highway"~"^({hw_filter})$"]({south},{west},{north},{east});
 );
