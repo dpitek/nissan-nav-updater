@@ -129,8 +129,8 @@ def nc_bbox() -> tuple[float, float, float, float]:
 
 
 def tile_bbox(lat_base: float, lon_base: float) -> tuple[float, float, float, float]:
-    """Bounding box for a single MAPAL tile (1.0° lat × 2.0° lon)."""
-    return (lat_base, lon_base, lat_base + 1.0, lon_base + 2.0)
+    """Bounding box for a single MAPAL tile (1.0° lat × 1.0° lon)."""
+    return (lat_base, lon_base, lat_base + 1.0, lon_base + 1.0)
 
 
 def segment_length_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

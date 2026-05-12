@@ -1,21 +1,23 @@
 """
 Tile coordinate utilities for Clarion CLA-NAVI06-01 (Zenrin/NAVTEQ) format.
 
-Tile naming convention: B{B_hex}R{R_hex}R.DAT
-  B_hex = (lat_base - 30) * 8    (1 tile = 1.0 degree latitude)
-  R_hex = (lon_base + 100) / 2   (1 tile = 2.0 degrees longitude)
+Tile naming convention: B{B_hex}R0{R_hex}{SUFFIX}R.DAT
+  B_hex  = (lat_base - 30) * 8    (1 tile = 1.0 degree latitude)
+  R_hex  = floor((lon_base + 100) / 2)  (R is the half-degree bucket)
+  SUFFIX = '0' if lon_base is even  (R×2-100 + 0)
+           '8' if lon_base is odd   (R×2-100 + 1)
+
+  Each tile covers exactly 1.0° lat × 1.0° lon.
+  Pairs of tiles (suffix '0' and '8') together span a 2° lon band.
 
   lat_base = B_hex / 8 + 30
-  lon_base = R_hex * 2 - 100
-
-  Filename format: B{B:02X}R0{R:X}0R.DAT
-    The literal "0" before and after {R:X} are separator chars, not part of R.
+  lon_base = R_hex * 2 - 100 + (1 if SUFFIX == '8' else 0)
 
 Within each tile, coordinates are tile-relative u16 (big-endian):
   lat_rel = int((lat - tile_lat_base) * 65536)
   lon_rel = int((lon - tile_lon_base) * 65536)
-  Range: 0..65535 per axis → spans ~1.0 degree lat, ~2.0 degrees lon
-  Resolution: ~1.7m lat, ~1.4m lon at 35N
+  Range: 0..65535 per axis → spans exactly 1.0° lat and 1.0° lon
+  Resolution: ~1.7m lat at 35N
 """
 
 SCALE = 65536
@@ -24,29 +26,34 @@ SCALE = 65536
 def tile_name(lat: float, lon: float) -> str:
     """Return the MAPAL tile filename for a given lat/lon (e.g. 'B20R0B0R.DAT').
 
-    Each tile covers 1.0 degree lat × 2.0 degrees lon.
+    Each tile covers 1.0° lat × 1.0° lon.
     B = (lat_base - 30) * 8  where lat_base = floor(lat - 30) + 30
+    R = floor((lon + 100) / 2)  (half-degree bucket)
+    SUFFIX: '0' if lon falls in even degree, '8' if in odd degree.
     """
-    B = int(lat - 30) * 8      # floor to 1-degree boundary, scale by 8
-    R = int((lon + 100) / 2)
-    return f"B{B:02X}R0{R:X}0R.DAT"
+    B = int(lat - 30) * 8          # floor to 1-degree lat boundary, scale by 8
+    R = int((lon + 100) / 2)       # half-degree bucket
+    even_base = R * 2 - 100        # even lon_base for this R value
+    suffix = '8' if (lon - even_base) >= 1.0 else '0'
+    return f"B{B:02X}R0{R:X}{suffix}R.DAT"
 
 
 def tile_base(filename: str) -> tuple[float, float]:
-    """Return (lat_base, lon_base) for a tile filename."""
-    # Strip path and extension
+    """Return (lat_base, lon_base) for a tile filename.
+
+    Handles both '0' suffix (even lon) and '8' suffix (odd lon) tiles.
+    """
+    import re
     name = filename.split("/")[-1].replace(".DAT", "")
-    # Format: B{B:02X}R0{R:X}0R  e.g. B20R0B0R
-    # b_part: hex between 'B' and first 'R'
-    # r_part: hex between first 'R0' and last '0R' (strip the literal 0 delimiters)
-    b_part = name[1:name.index("R")]
-    raw_r = name[name.index("R") + 1:name.rindex("R")]
-    # raw_r is "0{R:X}0" — strip one leading and one trailing char (the literal zeros)
-    r_part = raw_r[1:-1]
-    B = int(b_part, 16)
-    R = int(r_part, 16)
+    # Format: B{B:02X}R0{R:X}{SUFFIX}R  e.g. B20R0B0R or B20R0B8R
+    m = re.match(r'B([0-9A-Fa-f]{2})R0([0-9A-Fa-f])([08])R$', name)
+    if not m:
+        raise ValueError(f"Cannot parse tile filename: {filename!r}")
+    B = int(m.group(1), 16)
+    R = int(m.group(2), 16)
+    suffix = m.group(3)
     lat_base = B / 8 + 30
-    lon_base = R * 2 - 100
+    lon_base = R * 2 - 100 + (1 if suffix == '8' else 0)
     return lat_base, lon_base
 
 
@@ -90,8 +97,8 @@ def find_tile_for_coord(mapal_dir: str, lat: float, lon: float) -> str | None:
             continue
         try:
             lat_base, lon_base = tile_base(fname)
-            # Each tile spans 0.125 deg lat, 2 deg lon
-            if lat_base <= lat < lat_base + 1.0 and lon_base <= lon < lon_base + 2.0:
+            # Each tile spans exactly 1.0° lat × 1.0° lon
+            if lat_base <= lat < lat_base + 1.0 and lon_base <= lon < lon_base + 1.0:
                 return os.path.join(mapal_dir, fname)
         except Exception:
             continue

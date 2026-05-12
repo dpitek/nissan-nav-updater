@@ -13,8 +13,9 @@ def test_tile_name_topsail():
 
 def test_tile_name_cary():
     # Cary NC at ~35.8N, -78.8W
-    # lat_base = floor(35.8-30)*8 = 5*8=40=0x28; R = floor(21.2/2)=10=0xA
-    assert tile_name(35.8, -78.8) == "B28R0A0R.DAT"
+    # lat_base=35, B=5*8=40=0x28; R=floor(21.2/2)=10=0xA; even_base=-80
+    # lon=-78.8: -78.8-(-80)=1.2 >= 1.0 → suffix='8', lon_base=-79
+    assert tile_name(35.8, -78.8) == "B28R0A8R.DAT"
 
 
 def test_tile_name_south_nc():
@@ -24,20 +25,36 @@ def test_tile_name_south_nc():
 
 
 def test_tile_base_b20():
-    """Regression: B20R0B0R.DAT should give lat=34.0, lon=-78.0"""
+    """Regression: B20R0B0R.DAT → lat=34.0, lon=-78.0 (suffix '0' = even lon)"""
     lat_base, lon_base = tile_base("B20R0B0R.DAT")
     assert lat_base == 34.0, f"lat_base={lat_base}"
     assert lon_base == -78.0, f"lon_base={lon_base}"
 
 
+def test_tile_base_8_suffix():
+    """'8' suffix tiles: lon_base = R*2-100+1 (odd degree)."""
+    # B28R0A8R: B=0x28=40→lat=35, R=0xA=10→even=-80, +1=-79
+    lat_base, lon_base = tile_base("B28R0A8R.DAT")
+    assert lat_base == 35.0, f"lat_base={lat_base}"
+    assert lon_base == -79.0, f"lon_base={lon_base}"
+
+
+def test_tile_name_cary_roundtrip():
+    """Cary tile B28R0A8R should decode back to lat=35, lon=-79."""
+    fname = tile_name(35.8, -78.8)
+    assert fname == "B28R0A8R.DAT"
+    lat_b, lon_b = tile_base(fname)
+    assert lat_b == 35.0 and lon_b == -79.0
+
+
 def test_tile_base_roundtrip():
-    """tile_name → tile_base should recover the tile's base coordinates."""
+    """tile_name → tile_base should recover the tile's base coordinates (1°×1° tiles)."""
     for lat in [33.1, 34.4, 35.0, 35.9, 36.5]:
-        for lon in [-84.5, -80.0, -77.5]:
+        for lon in [-84.5, -80.0, -79.5, -78.8, -77.5]:
             fname = tile_name(lat, lon)
             lat_b, lon_b = tile_base(fname)
             assert lat_b <= lat < lat_b + 1.0, f"lat {lat} not in [{lat_b}, {lat_b+1.0}) via {fname}"
-            assert lon_b <= lon < lon_b + 2.0, f"lon {lon} not in [{lon_b}, {lon_b+2.0}) via {fname}"
+            assert lon_b <= lon < lon_b + 1.0, f"lon {lon} not in [{lon_b}, {lon_b+1.0}) via {fname}"
 
 
 def test_tile_rel_roundtrip():
@@ -68,7 +85,8 @@ def test_auger_shell_court_rel():
 if __name__ == '__main__':
     tests = [
         test_tile_name_topsail, test_tile_name_cary, test_tile_name_south_nc,
-        test_tile_base_b20, test_tile_base_roundtrip, test_tile_rel_roundtrip,
+        test_tile_base_b20, test_tile_base_8_suffix, test_tile_name_cary_roundtrip,
+        test_tile_base_roundtrip, test_tile_rel_roundtrip,
         test_auger_shell_court_tile, test_auger_shell_court_rel,
     ]
     passed = 0

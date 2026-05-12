@@ -142,11 +142,21 @@ python updaters/add_road.py --from-lat ...
 > Field names and interpretations are inferred, not sourced from vendor documentation.
 
 ### MAPAL tile files (`MAPAL001/`)
-Map display layer. One tile file per ~1.0° lat × 2.0° lon region.
+Map display layer. One tile file per **1.0° lat × 1.0° lon** region.
 
-**Filename format:** `B{B:02X}R0{R:X}0R.DAT`
+**Filename format:** `B{B:02X}R0{R:X}{S}R.DAT`
 - `B = (lat_base − 30) × 8`  → `lat_base = B / 8 + 30`
-- `R = (lon_base + 100) / 2` → `lon_base = R × 2 − 100`
+- `R = floor((lon_base + 100) / 2)` (half-degree bucket)
+- `S = '0'` if lon_base is even  (lon_base = R × 2 − 100)
+- `S = '8'` if lon_base is odd   (lon_base = R × 2 − 100 + 1)
+
+Pairs of tiles (S='0' and S='8') together span a 2° lon band.
+New tiles can be created for areas not covered by the original card.
+
+**File structure:**
+- Bytes 0x0000–0x10ff: header (version strings + spatial index)
+- Bytes 0x1100+: compressed road records
+- Trailing null bytes: free space for appending
 
 **Record structure (per record):**
 - zlib compressed stream (magic bytes `0x58 0x85`, wbits=13, level=6)
@@ -160,8 +170,8 @@ hdr[2]=25, hdr[3]=13434, hdr[4]=10991, hdr[7]=65535, hdr[9]=11
 
 **Coordinate encoding (tile-relative u16):**
 ```python
-lat_rel = int((lat - lat_base) * 65536)  # 0..65535
-lon_rel = int((lon - lon_base) * 65536)  # 0..65535
+lat_rel = int((lat - lat_base) * 65536)  # 0..65535 → 1.0° lat span
+lon_rel = int((lon - lon_base) * 65536)  # 0..65535 → 1.0° lon span
 ```
 
 ### POI database (`REFER001/POINT047.DAT.cmp` + `.ind`)
@@ -184,6 +194,7 @@ Tested on an **Infiniti Q60** with CLA-NAVI06-01 navigation unit:
 | Modification | Result | Layer |
 |---|---|---|
 | New road segment (post-2015 subdivision) | ✅ Visible on map display | MAPAL |
+| New tile creation (area not on original card) | ✅ Functional — road visible | MAPAL |
 | ~15,000 regional POIs from OSM | ✅ Appear in Nearby Places | REFER001 |
 | Dealership coordinate corrections | ✅ Applied | REFER002 |
 | Address search for new roads | ❌ Not functional | HOUSE001 (not modified) |
