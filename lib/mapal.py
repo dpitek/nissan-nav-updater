@@ -294,6 +294,61 @@ def append_record(path: str, compressed: bytes, dry_run: bool = False) -> int:
     return record_offset
 
 
+def batch_write_records(path: str, compressed_records: list[bytes],
+                        dry_run: bool = False) -> tuple[int, int]:
+    """Write many compressed records to a tile in a single disk pass.
+
+    Vastly more efficient than calling append_record() in a loop (which
+    reads+writes the entire file for every record).
+
+    Returns:
+        (written, skipped) — skipped means ran out of free space.
+    """
+    data = bytearray(read_tile(path))
+    free = get_free_space(data)
+    positions = find_records(bytes(data))
+
+    # Locate insert position
+    if positions:
+        last_pos = positions[-1]
+        insert_at = last_pos
+        for end in range(last_pos + 4, min(last_pos + 8192, len(data))):
+            try:
+                zlib.decompress(bytes(data[last_pos:end]))
+                insert_at = end
+                break
+            except Exception:
+                continue
+        first_sep = b'\x00\x00'   # separator before first new record
+    else:
+        # New tile: records start right after the header
+        insert_at = _HEADER_SIZE
+        first_sep = b''           # no separator for very first record ever
+
+    written = 0
+    skipped = 0
+    pos = insert_at
+
+    for i, rec in enumerate(compressed_records):
+        sep = first_sep if i == 0 else b'\x00\x00'
+        needed = len(sep) + len(rec)
+        if needed > free:
+            skipped += len(compressed_records) - i
+            break
+        data[pos:pos + len(sep)] = sep
+        pos += len(sep)
+        data[pos:pos + len(rec)] = rec
+        pos += len(rec)
+        free -= needed
+        written += 1
+
+    if not dry_run and written > 0:
+        with open(path, 'wb') as f:
+            f.write(bytes(data))
+
+    return written, skipped
+
+
 def scan_nodes(data: bytes, lat_lo: float, lat_hi: float, lon_lo: float, lon_hi: float,
                lat_base: float, lon_base: float) -> list[dict]:
     """
