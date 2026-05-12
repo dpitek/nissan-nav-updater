@@ -181,6 +181,55 @@ def read_tile(path: str) -> bytes:
         return f.read()
 
 
+# Header template cache (filled on first call)
+_HEADER_TEMPLATE: bytes | None = None
+_HEADER_SIZE = 0x1100  # 4352 bytes
+_NEW_TILE_SIZE = 4 * 1024 * 1024  # 4 MB — generous free space for dense urban tiles
+
+
+def _get_header_template(mapal_dir: str) -> bytes:
+    """Return a zeroed-spatial-index tile header (4352 bytes) from any existing tile."""
+    global _HEADER_TEMPLATE
+    if _HEADER_TEMPLATE is not None:
+        return _HEADER_TEMPLATE
+    import os
+    for fname in sorted(os.listdir(mapal_dir)):
+        if not fname.endswith(".DAT"):
+            continue
+        path = os.path.join(mapal_dir, fname)
+        try:
+            with open(path, 'rb') as f:
+                hdr = bytearray(f.read(_HEADER_SIZE))
+            if len(hdr) < _HEADER_SIZE:
+                continue
+            # Verify starts with CLARION UTF-16LE marker
+            if hdr[1:2] != b'\x43':
+                continue
+            # Zero out spatial index at 0x1000-0x10ff
+            for i in range(0x1000, 0x1100):
+                hdr[i] = 0x00
+            _HEADER_TEMPLATE = bytes(hdr)
+            return _HEADER_TEMPLATE
+        except Exception:
+            continue
+    raise RuntimeError("No valid tile found to use as header template")
+
+
+def ensure_tile_exists(tile_path: str, mapal_dir: str, size: int = _NEW_TILE_SIZE) -> bool:
+    """Create a minimal empty tile file if it doesn't exist.
+
+    Returns True if a new tile was created, False if it already existed.
+    """
+    import os
+    if os.path.exists(tile_path):
+        return False
+    hdr = _get_header_template(mapal_dir)
+    content = hdr + b'\x00' * (size - len(hdr))
+    with open(tile_path, 'wb') as f:
+        f.write(content)
+    return True
+
+
 def get_last_link_id(data: bytes) -> int:
     """Return the highest link_id currently in the tile."""
     max_id = 0

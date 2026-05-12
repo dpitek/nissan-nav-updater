@@ -74,7 +74,8 @@ def from_tile_rel(lat_rel: int, lon_rel: int, lat_base: float, lon_base: float) 
 
 
 def nc_mapal_tiles(mapal_dir: str) -> list[str]:
-    """Return list of MAPAL tile files covering North Carolina (lat 33-37, lon -85 to -75)."""
+    """Return list of MAPAL tile files covering North Carolina (lat 33-37, lon -85 to -75).
+    Only returns tiles that currently EXIST on disk."""
     import os
     tiles = []
     for fname in os.listdir(mapal_dir):
@@ -87,6 +88,26 @@ def nc_mapal_tiles(mapal_dir: str) -> list[str]:
         except Exception:
             continue
     return sorted(tiles)
+
+
+def nc_all_tile_paths(mapal_dir: str) -> list[tuple[str, float, float, bool]]:
+    """Return all expected MAPAL tile paths for NC coverage (lat 33-36, lon -85 to -76).
+
+    Returns list of (path, lat_base, lon_base, exists) for every expected tile.
+    Covers NC geographic extent including western mountains and the coast.
+    """
+    import os
+    results = []
+    # NC tiles: lat_base 33-36, lon_base -85 to -76 (1° steps)
+    for lat_b in [33.0, 34.0, 35.0, 36.0]:
+        B = int((lat_b - 30) * 8)
+        for lon_b in range(-85, -75):  # -85, -84, ..., -76
+            R = int((lon_b + 100) / 2)
+            suffix = '8' if (lon_b - (R * 2 - 100)) >= 1 else '0'
+            fname = f"B{B:02X}R0{R:X}{suffix}R.DAT"
+            path = os.path.join(mapal_dir, fname)
+            results.append((path, lat_b, float(lon_b), os.path.exists(path)))
+    return sorted(results)
 
 
 def find_tile_for_coord(mapal_dir: str, lat: float, lon: float) -> str | None:

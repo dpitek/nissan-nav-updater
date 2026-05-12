@@ -37,9 +37,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from lib.mapal import (
     read_tile, find_records, _decompress, get_last_link_id,
-    get_free_space, build_road_record, append_record, scan_nodes, HDR_SIZE
+    get_free_space, build_road_record, append_record, scan_nodes, HDR_SIZE,
+    ensure_tile_exists,
 )
-from lib.tiles import tile_base, nc_mapal_tiles, to_tile_rel
+from lib.tiles import tile_base, nc_mapal_tiles, nc_all_tile_paths, to_tile_rel
 from lib.osm import fetch_roads, tile_bbox, segment_length_km
 from lib.card import find_card
 
@@ -92,7 +93,7 @@ def clip_to_tile(nodes, lat_base, lon_base):
     result = []
     for node in nodes:
         lat, lon = node['lat'], node['lon']
-        if lat_base - 0.001 <= lat < lat_base + 0.126 and lon_base - 0.01 <= lon < lon_base + 2.01:
+        if lat_base - 0.001 <= lat < lat_base + 1.001 and lon_base - 0.01 <= lon < lon_base + 1.01:
             result.append(node)
     return result
 
@@ -124,7 +125,7 @@ def process_tile(tile_path, threshold_m, dry_run, verbose):
     mapal_nodes = scan_nodes(
         data,
         lat_base - 0.001, lat_base + 1.001,
-        lon_base - 0.01, lon_base + 2.01,
+        lon_base - 0.01, lon_base + 1.01,
         lat_base, lon_base
     )
 
@@ -148,9 +149,9 @@ def process_tile(tile_path, threshold_m, dry_run, verbose):
             lat_t, lon_t = n_to['lat'], n_to['lon']
 
             in_tile_f = (lat_base <= lat_f < lat_base + 1.0 and
-                         lon_base <= lon_f < lon_base + 2.0)
+                         lon_base <= lon_f < lon_base + 1.0)
             in_tile_t = (lat_base <= lat_t < lat_base + 1.0 and
-                         lon_base <= lon_t < lon_base + 2.0)
+                         lon_base <= lon_t < lon_base + 1.0)
 
             if not (in_tile_f and in_tile_t):
                 continue
@@ -226,13 +227,33 @@ def run(args):
     # Resolve tile list
     if args.tiles:
         tile_paths = [os.path.join(tile_dir, t.strip()) for t in args.tiles.split(',')]
-        tile_paths = [p for p in tile_paths if os.path.exists(p)]
+        # Create any explicitly-specified tiles that don't exist yet
+        for p in tile_paths:
+            if not os.path.exists(p):
+                if not args.dry_run:
+                    ensure_tile_exists(p, tile_dir)
+                    print(f"  [NEW TILE] Created {os.path.basename(p)}")
+    elif args.all_nc:
+        # All expected NC tiles — create missing ones first
+        all_tiles = nc_all_tile_paths(tile_dir)
+        created = 0
+        for path, lat_b, lon_b, exists in all_tiles:
+            if not exists and not args.dry_run:
+                ensure_tile_exists(path, tile_dir)
+                created += 1
+                print(f"  [NEW TILE] Created {os.path.basename(path)} "
+                      f"(lat={lat_b}, lon={lon_b})")
+        if created:
+            print(f"  Created {created} new tile files\n")
+        tile_paths = [p for p, _, _, _ in all_tiles]
     else:
         tile_paths = nc_mapal_tiles(tile_dir)
 
     print(f"Tiles to process: {len(tile_paths)}")
     print(f"Match threshold: {args.match_threshold_m}m")
     print(f"Tile dir: {tile_dir}")
+    if args.all_nc:
+        print("[ALL-NC mode: includes newly created tiles for missing coverage areas]")
     if args.dry_run:
         print("[DRY RUN — no writes]")
     print()
@@ -278,7 +299,9 @@ def main():
     )
     parser.add_argument('--tile-dir', type=str, default=None)
     parser.add_argument('--tiles', type=str, default=None,
-                        help="Comma-sep tile filenames to process (default: all NC tiles)")
+                        help="Comma-sep tile filenames to process (default: existing NC tiles)")
+    parser.add_argument('--all-nc', action='store_true',
+                        help="Process ALL expected NC tiles, creating missing ones (4MB each)")
     parser.add_argument('--match-threshold-m', type=int, default=MATCH_THRESHOLD_DEFAULT,
                         help=f"Distance threshold for 'already exists' check (default: {MATCH_THRESHOLD_DEFAULT}m)")
     parser.add_argument('--dry-run', action='store_true')
